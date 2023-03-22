@@ -1,11 +1,11 @@
 package com.github.matheusmn.resource;
 
+import com.github.matheusmn.entity.Follower;
 import com.github.matheusmn.entity.Post;
 import com.github.matheusmn.entity.User;
-import com.github.matheusmn.entity.dto.PostCreateDto;
-import com.github.matheusmn.entity.dto.PostResponseDto;
-import com.github.matheusmn.entity.dto.UserCreateDto;
+import com.github.matheusmn.entity.dto.*;
 import com.github.matheusmn.error.ResponseError;
+import com.github.matheusmn.repository.FollowerRepository;
 import com.github.matheusmn.repository.PostRepository;
 import com.github.matheusmn.repository.UserRepository;
 import io.quarkus.hibernate.orm.panache.PanacheQuery;
@@ -19,6 +19,7 @@ import javax.ws.rs.*;
 import javax.ws.rs.core.MediaType;
 import javax.ws.rs.core.Response;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -33,6 +34,9 @@ public class UserResource {
 
     @Inject
     public PostRepository postRepository;
+
+    @Inject
+    public FollowerRepository followerRepository;
 
     @Inject
     public Validator validator;
@@ -131,13 +135,23 @@ public class UserResource {
 
     @GET
     @Path("/{userId}/post")
-    public Response getPost(@PathParam("userId") Long userId){
+    public Response getPost(@PathParam("userId") Long userId,
+                            @HeaderParam("followerId") Long followerId){
         User user = userRepository.findById(userId);
         if (user == null){
             return Response.status(Response.Status.NOT_FOUND).build();
         }
+        if(followerId == null){
+            return Response.status(Response.Status.BAD_REQUEST).entity("You forget the header").build();
+        }
 
-        PanacheQuery<Post> query = postRepository.find("user", Sort.by("dateTime", Sort.Direction.Descending), user);
+        User follower = userRepository.findById(followerId);
+        boolean follows = followerRepository.follows(follower, user);
+        if(!follows){
+            return Response.status(Response.Status.FORBIDDEN).entity("You cant see these posts.").build();
+        }
+
+        PanacheQuery<Post> query = postRepository.find("user", Sort.by("dateTime", Sort.Direction.Descending), follower);
         List<Post> postList = query.list();
 
         List<PostResponseDto> response = postList.stream()
@@ -145,4 +159,25 @@ public class UserResource {
         return Response.ok(response).build();
     }
 
+    @GET
+    @Path("/{userId}/post/all")
+    public Response getPost(@PathParam("userId") Long userId){
+        User user = userRepository.findById(userId);
+        if (user == null){
+            return Response.status(Response.Status.NOT_FOUND).build();
+        }
+
+        List<Follower> followersList = followerRepository.followers(user);
+        FollowersResponseDto followers = FollowersResponseDto.getList(followersList);
+
+        List<Long> ids = new ArrayList<>();
+        for (FollowersDto list: followers.getFollowersList()) {
+            ids.add(list.getId());
+        }
+
+        System.out.println("TESTE :: " + ids.toString());
+        List<Post> postByFollows = postRepository.findPostByFollows(ids);
+
+        return Response.ok(postByFollows).build();
+    }
 }
